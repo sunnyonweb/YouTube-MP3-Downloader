@@ -110,11 +110,23 @@ def run_download_job(job_id, url):
     format_selector = 'bestaudio[acodec*=mp3]/bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio[acodec!=none]/bestaudio/best'
 
     try:
+        # Anti-bot headers for YouTube requests
+        common_opts = {
+            'socket_timeout': 30,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept-Language': 'en-US,en;q=0.9',
+            },
+            'geo_bypass': True,
+            'extractor_args': {'youtube': {'player_client': ['mweb', 'web']}},
+        }
+        
         probe_opts = {
             'format': format_selector,
             'ffmpeg_location': FFMPEG_LOCATION,
             'noplaylist': True,
             'quiet': True,
+            **common_opts,
         }
 
         with yt_dlp.YoutubeDL(probe_opts) as probe:
@@ -133,6 +145,7 @@ def run_download_job(job_id, url):
             'concurrent_fragment_downloads': 4,
             'progress_hooks': [make_progress_hook(job_id)],
             'quiet': True,
+            **common_opts,
         }
 
         if needs_conversion:
