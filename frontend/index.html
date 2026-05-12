@@ -12,20 +12,12 @@
   <h1>YouTube MP3 Downloader</h1>
 
   <div class="cookies-section">
-    <details>
-      <summary>⚙️ YouTube Cookies (Required if downloads fail)</summary>
-      <div class="cookies-content">
-        <p><strong>YouTube requires authentication. If downloads fail with "Sign in" error:</strong></p>
-        <ol>
-          <li>Export your YouTube cookies using: <code>yt-dlp --cookies-from-browser firefox</code> (or chrome)</li>
-          <li>This creates <code>cookies.txt</code></li>
-          <li>Upload it below</li>
-        </ol>
-        <input type="file" id="cookiesFile" accept=".txt,.json" />
-        <button onclick="uploadCookies()">Upload Cookies</button>
-        <p id="cookiesStatus"></p>
-      </div>
-    </details>
+    <p><strong>Optional:</strong> if a video asks for sign-in, upload your own YouTube cookies for this download only.</p>
+    <ol>
+      <li>Export cookies from your logged-in browser as <code>cookies.txt</code></li>
+      <li>Select that file below before clicking Download</li>
+    </ol>
+    <input type="file" id="cookiesFile" accept=".txt,.json" />
   </div>
 
   <input type="text" id="youtubeUrl" placeholder="Paste YouTube Link Here">

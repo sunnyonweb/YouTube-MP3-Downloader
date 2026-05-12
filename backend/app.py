@@ -5,6 +5,8 @@ import os
 import uuid
 import threading
 import re
+import tempfile
+from pathlib import Path
 from urllib.parse import urlparse
 
 app = Flask(__name__)
@@ -14,7 +16,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BASE_DIR)
 FRONTEND_DIR = os.path.join(PROJECT_ROOT, 'frontend')
 DOWNLOAD_FOLDER = os.path.join(BASE_DIR, 'downloads')
-COOKIES_FILE = os.path.join(BASE_DIR, 'yt_cookies.txt')
 # Allow overriding ffmpeg location via environment (useful in Docker).
 FFMPEG_LOCATION = os.environ.get('FFMPEG_LOCATION') or os.path.join(PROJECT_ROOT, 'ffmpeg-8.1.1-essentials_build', 'bin')
 AUDIO_QUALITY = '9'
@@ -105,7 +106,7 @@ def make_progress_hook(job_id):
     return progress_hook
 
 
-def run_download_job(job_id, url):
+def run_download_job(job_id, url, cookies_file=None):
     import time
     
     unique_id = job_id
@@ -134,97 +135,120 @@ def run_download_job(job_id, url):
             'no_warnings': False,
             'retries': 5,
         }
-        # Add cookies if available
-        if os.path.exists(COOKIES_FILE) and os.path.getsize(COOKIES_FILE) > 0:
-            opts['cookiefile'] = COOKIES_FILE
+        if cookies_file and os.path.exists(cookies_file) and os.path.getsize(cookies_file) > 0:
+            opts['cookiefile'] = cookies_file
         return opts
 
     max_retries = 3
     last_error = None
     
-    for attempt in range(max_retries):
-        try:
-            if attempt > 0:
-                wait_time = (2 ** attempt)  # exponential backoff: 2, 4, 8 seconds
+    try:
+        for attempt in range(max_retries):
+            try:
+                if attempt > 0:
+                    wait_time = (2 ** attempt)  # exponential backoff: 2, 4, 8 seconds
+                    download_jobs[job_id].update({
+                        'status': 'downloading',
+                        'progress': 0,
+                        'message': f'Retrying after {wait_time}s... (attempt {attempt + 1}/{max_retries})',
+                    })
+                    time.sleep(wait_time)
+
+                probe_opts = {
+                    'format': format_selector,
+                    'ffmpeg_location': FFMPEG_LOCATION,
+                    **get_ydl_opts(is_download=False),
+                }
+
+                with yt_dlp.YoutubeDL(probe_opts) as probe:
+                    probe_info = probe.extract_info(url, download=False)
+
+                source_ext = (probe_info.get('ext') or '').lower()
+                source_acodec = (probe_info.get('acodec') or '').lower()
+                needs_conversion = not (source_ext == 'mp3' or 'mp3' in source_acodec)
+                download_jobs[job_id]['needs_conversion'] = needs_conversion
+
+                ydl_opts = {
+                    'format': format_selector,
+                    'outtmpl': output_template,
+                    'ffmpeg_location': FFMPEG_LOCATION,
+                    'concurrent_fragment_downloads': 4,
+                    'progress_hooks': [make_progress_hook(job_id)],
+                    **get_ydl_opts(is_download=True),
+                }
+
+                if needs_conversion:
+                    ydl_opts['postprocessors'] = [{
+                        'key': 'FFmpegExtractAudio',
+                        'preferredcodec': 'mp3',
+                        'preferredquality': AUDIO_QUALITY,
+                    }]
+                    ydl_opts['postprocessor_args'] = ['-threads', '0']
+
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    title = info.get('title', 'audio')
+
+                mp3_ext = 'mp3' if needs_conversion else (source_ext or 'mp3')
+                mp3_file = os.path.join(DOWNLOAD_FOLDER, f'{unique_id}.{mp3_ext}')
+                if not os.path.exists(mp3_file):
+                    download_jobs[job_id].update({
+                        'status': 'error',
+                        'error': 'MP3 conversion failed: output file was not created',
+                    })
+                    return
+
                 download_jobs[job_id].update({
-                    'status': 'downloading',
-                    'progress': 0,
-                    'message': f'Retrying after {wait_time}s... (attempt {attempt + 1}/{max_retries})',
-                })
-                time.sleep(wait_time)
-            
-            probe_opts = {
-                'format': format_selector,
-                'ffmpeg_location': FFMPEG_LOCATION,
-                **get_ydl_opts(is_download=False),
-            }
-
-            with yt_dlp.YoutubeDL(probe_opts) as probe:
-                probe_info = probe.extract_info(url, download=False)
-
-            source_ext = (probe_info.get('ext') or '').lower()
-            source_acodec = (probe_info.get('acodec') or '').lower()
-            needs_conversion = not (source_ext == 'mp3' or 'mp3' in source_acodec)
-            download_jobs[job_id]['needs_conversion'] = needs_conversion
-
-            ydl_opts = {
-                'format': format_selector,
-                'outtmpl': output_template,
-                'ffmpeg_location': FFMPEG_LOCATION,
-                'concurrent_fragment_downloads': 4,
-                'progress_hooks': [make_progress_hook(job_id)],
-                **get_ydl_opts(is_download=True),
-            }
-
-            if needs_conversion:
-                ydl_opts['postprocessors'] = [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': AUDIO_QUALITY,
-                }]
-                ydl_opts['postprocessor_args'] = ['-threads', '0']
-
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                title = info.get('title', 'audio')
-
-            mp3_ext = 'mp3' if needs_conversion else (source_ext or 'mp3')
-            mp3_file = os.path.join(DOWNLOAD_FOLDER, f'{unique_id}.{mp3_ext}')
-            if not os.path.exists(mp3_file):
-                download_jobs[job_id].update({
-                    'status': 'error',
-                    'error': 'MP3 conversion failed: output file was not created',
+                    'status': 'done',
+                    'progress': 100,
+                    'title': title,
+                    'download_name': build_download_name(title),
+                    'file_path': mp3_file,
                 })
                 return
 
-            download_jobs[job_id].update({
-                'status': 'done',
-                'progress': 100,
-                'title': title,
-                'download_name': build_download_name(title),
-                'file_path': mp3_file,
-            })
-            return  # Success, exit retry loop
-            
-        except Exception as e:
-            last_error = str(e)
-            if attempt < max_retries - 1:
-                continue  # Retry
-            else:
-                # All retries exhausted
+            except Exception as e:
+                last_error = str(e)
+                if attempt < max_retries - 1:
+                    continue
                 download_jobs[job_id].update({
                     'status': 'error',
                     'error': f'Download failed after {max_retries} attempts: {last_error}',
                 })
                 return
+    finally:
+        if cookies_file:
+            try:
+                if os.path.exists(cookies_file):
+                    os.remove(cookies_file)
+            except OSError:
+                pass
 
 @app.route('/download', methods=['POST'])
 def download_audio():
-    data = request.get_json()
-    url = data.get('url', '').strip() if data else ''
+    url = ''
+    cookies_file_path = None
+
+    if request.content_type and request.content_type.startswith('multipart/form-data'):
+        url = (request.form.get('url') or '').strip()
+        cookies_upload = request.files.get('cookies')
+        if cookies_upload and cookies_upload.filename:
+            suffix = Path(cookies_upload.filename).suffix.lower()
+            if suffix not in ('.txt', '.json'):
+                return jsonify({'error': 'Only .txt or .json cookies files are supported'}), 400
+
+            temp_file = tempfile.NamedTemporaryFile(delete=False, dir=DOWNLOAD_FOLDER, prefix='cookies_', suffix=suffix)
+            temp_file.close()
+            cookies_upload.save(temp_file.name)
+            cookies_file_path = temp_file.name
+    else:
+        data = request.get_json()
+        url = data.get('url', '').strip() if data else ''
 
     validation_error = validate_youtube_url(url)
     if validation_error:
+        if cookies_file_path and os.path.exists(cookies_file_path):
+            os.remove(cookies_file_path)
         return jsonify({'error': validation_error}), 400
 
     job_id = str(uuid.uuid4())
@@ -234,7 +258,7 @@ def download_audio():
         'message': 'Queued for download',
     }
 
-    worker = threading.Thread(target=run_download_job, args=(job_id, url), daemon=True)
+    worker = threading.Thread(target=run_download_job, args=(job_id, url, cookies_file_path), daemon=True)
     worker.start()
 
     return jsonify({
@@ -272,39 +296,6 @@ def download_file(job_id):
         download_name=job.get('download_name', 'audio.mp3')
     )
 
-
-@app.route('/upload-cookies', methods=['POST'])
-def upload_cookies():
-    """Accept YouTube cookies file upload for authentication."""
-    if 'cookies' not in request.files:
-        return jsonify({'error': 'No cookies file provided'}), 400
-    
-    cookies_file = request.files['cookies']
-    if cookies_file.filename == '':
-        return jsonify({'error': 'No file selected'}), 400
-    
-    if not (cookies_file.filename.endswith('.txt') or cookies_file.filename.endswith('.json')):
-        return jsonify({'error': 'Only .txt or .json files are supported'}), 400
-    
-    try:
-        # Save cookies file
-        cookies_file.save(COOKIES_FILE)
-        return jsonify({
-            'success': True,
-            'message': 'Cookies uploaded successfully. Your next download will use YouTube authentication.',
-        }), 200
-    except Exception as e:
-        return jsonify({'error': f'Failed to upload cookies: {str(e)}'}), 500
-
-
-@app.route('/cookies-status', methods=['GET'])
-def cookies_status():
-    """Check if cookies are already loaded."""
-    has_cookies = os.path.exists(COOKIES_FILE) and os.path.getsize(COOKIES_FILE) > 0
-    return jsonify({
-        'has_cookies': has_cookies,
-        'message': 'Cookies loaded' if has_cookies else 'No cookies uploaded yet',
-    }), 200
 
 if __name__ == '__main__':
     app.run(debug=True)
