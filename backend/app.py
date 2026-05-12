@@ -105,82 +105,114 @@ def make_progress_hook(job_id):
 
 
 def run_download_job(job_id, url):
+    import time
+    
     unique_id = job_id
     output_template = os.path.join(DOWNLOAD_FOLDER, f'{unique_id}.%(ext)s')
     format_selector = 'bestaudio[acodec*=mp3]/bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio[acodec!=none]/bestaudio/best'
 
-    try:
-        # Anti-bot headers for YouTube requests
-        common_opts = {
-            'socket_timeout': 30,
+    # Common options for both probe and download, with aggressive YouTube bypass
+    def get_ydl_opts(is_download=False):
+        opts = {
+            'socket_timeout': 60,
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept-Language': 'en-US,en;q=0.9',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             },
             'geo_bypass': True,
-            'extractor_args': {'youtube': {'player_client': ['mweb', 'web']}},
-        }
-        
-        probe_opts = {
-            'format': format_selector,
-            'ffmpeg_location': FFMPEG_LOCATION,
+            'geo_bypass_country': 'US',
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'mweb', 'web'],
+                    'player_skip': ['js', 'webpage'],
+                }
+            },
             'noplaylist': True,
             'quiet': True,
-            **common_opts,
+            'no_warnings': False,
+            'retries': 5,
         }
+        return opts
 
-        with yt_dlp.YoutubeDL(probe_opts) as probe:
-            probe_info = probe.extract_info(url, download=False)
+    max_retries = 3
+    last_error = None
+    
+    for attempt in range(max_retries):
+        try:
+            if attempt > 0:
+                wait_time = (2 ** attempt)  # exponential backoff: 2, 4, 8 seconds
+                download_jobs[job_id].update({
+                    'status': 'downloading',
+                    'progress': 0,
+                    'message': f'Retrying after {wait_time}s... (attempt {attempt + 1}/{max_retries})',
+                })
+                time.sleep(wait_time)
+            
+            probe_opts = {
+                'format': format_selector,
+                'ffmpeg_location': FFMPEG_LOCATION,
+                **get_ydl_opts(is_download=False),
+            }
 
-        source_ext = (probe_info.get('ext') or '').lower()
-        source_acodec = (probe_info.get('acodec') or '').lower()
-        needs_conversion = not (source_ext == 'mp3' or 'mp3' in source_acodec)
-        download_jobs[job_id]['needs_conversion'] = needs_conversion
+            with yt_dlp.YoutubeDL(probe_opts) as probe:
+                probe_info = probe.extract_info(url, download=False)
 
-        ydl_opts = {
-            'format': format_selector,
-            'outtmpl': output_template,
-            'ffmpeg_location': FFMPEG_LOCATION,
-            'noplaylist': True,
-            'concurrent_fragment_downloads': 4,
-            'progress_hooks': [make_progress_hook(job_id)],
-            'quiet': True,
-            **common_opts,
-        }
+            source_ext = (probe_info.get('ext') or '').lower()
+            source_acodec = (probe_info.get('acodec') or '').lower()
+            needs_conversion = not (source_ext == 'mp3' or 'mp3' in source_acodec)
+            download_jobs[job_id]['needs_conversion'] = needs_conversion
 
-        if needs_conversion:
-            ydl_opts['postprocessors'] = [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': AUDIO_QUALITY,
-            }]
-            ydl_opts['postprocessor_args'] = ['-threads', '0']
+            ydl_opts = {
+                'format': format_selector,
+                'outtmpl': output_template,
+                'ffmpeg_location': FFMPEG_LOCATION,
+                'concurrent_fragment_downloads': 4,
+                'progress_hooks': [make_progress_hook(job_id)],
+                **get_ydl_opts(is_download=True),
+            }
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            title = info.get('title', 'audio')
+            if needs_conversion:
+                ydl_opts['postprocessors'] = [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': AUDIO_QUALITY,
+                }]
+                ydl_opts['postprocessor_args'] = ['-threads', '0']
 
-        mp3_ext = 'mp3' if needs_conversion else (source_ext or 'mp3')
-        mp3_file = os.path.join(DOWNLOAD_FOLDER, f'{unique_id}.{mp3_ext}')
-        if not os.path.exists(mp3_file):
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                title = info.get('title', 'audio')
+
+            mp3_ext = 'mp3' if needs_conversion else (source_ext or 'mp3')
+            mp3_file = os.path.join(DOWNLOAD_FOLDER, f'{unique_id}.{mp3_ext}')
+            if not os.path.exists(mp3_file):
+                download_jobs[job_id].update({
+                    'status': 'error',
+                    'error': 'MP3 conversion failed: output file was not created',
+                })
+                return
+
             download_jobs[job_id].update({
-                'status': 'error',
-                'error': 'MP3 conversion failed: output file was not created',
+                'status': 'done',
+                'progress': 100,
+                'title': title,
+                'download_name': build_download_name(title),
+                'file_path': mp3_file,
             })
-            return
-
-        download_jobs[job_id].update({
-            'status': 'done',
-            'progress': 100,
-            'title': title,
-            'download_name': build_download_name(title),
-            'file_path': mp3_file,
-        })
-    except Exception as e:
-        download_jobs[job_id].update({
-            'status': 'error',
-            'error': f'Download failed: {e}',
-        })
+            return  # Success, exit retry loop
+            
+        except Exception as e:
+            last_error = str(e)
+            if attempt < max_retries - 1:
+                continue  # Retry
+            else:
+                # All retries exhausted
+                download_jobs[job_id].update({
+                    'status': 'error',
+                    'error': f'Download failed after {max_retries} attempts: {last_error}',
+                })
+                return
 
 @app.route('/download', methods=['POST'])
 def download_audio():
