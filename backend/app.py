@@ -14,6 +14,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BASE_DIR)
 FRONTEND_DIR = os.path.join(PROJECT_ROOT, 'frontend')
 DOWNLOAD_FOLDER = os.path.join(BASE_DIR, 'downloads')
+COOKIES_FILE = os.path.join(BASE_DIR, 'yt_cookies.txt')
 # Allow overriding ffmpeg location via environment (useful in Docker).
 FFMPEG_LOCATION = os.environ.get('FFMPEG_LOCATION') or os.path.join(PROJECT_ROOT, 'ffmpeg-8.1.1-essentials_build', 'bin')
 AUDIO_QUALITY = '9'
@@ -133,6 +134,9 @@ def run_download_job(job_id, url):
             'no_warnings': False,
             'retries': 5,
         }
+        # Add cookies if available
+        if os.path.exists(COOKIES_FILE) and os.path.getsize(COOKIES_FILE) > 0:
+            opts['cookiefile'] = COOKIES_FILE
         return opts
 
     max_retries = 3
@@ -267,6 +271,40 @@ def download_file(job_id):
         as_attachment=True,
         download_name=job.get('download_name', 'audio.mp3')
     )
+
+
+@app.route('/upload-cookies', methods=['POST'])
+def upload_cookies():
+    """Accept YouTube cookies file upload for authentication."""
+    if 'cookies' not in request.files:
+        return jsonify({'error': 'No cookies file provided'}), 400
+    
+    cookies_file = request.files['cookies']
+    if cookies_file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+    
+    if not (cookies_file.filename.endswith('.txt') or cookies_file.filename.endswith('.json')):
+        return jsonify({'error': 'Only .txt or .json files are supported'}), 400
+    
+    try:
+        # Save cookies file
+        cookies_file.save(COOKIES_FILE)
+        return jsonify({
+            'success': True,
+            'message': 'Cookies uploaded successfully. Your next download will use YouTube authentication.',
+        }), 200
+    except Exception as e:
+        return jsonify({'error': f'Failed to upload cookies: {str(e)}'}), 500
+
+
+@app.route('/cookies-status', methods=['GET'])
+def cookies_status():
+    """Check if cookies are already loaded."""
+    has_cookies = os.path.exists(COOKIES_FILE) and os.path.getsize(COOKIES_FILE) > 0
+    return jsonify({
+        'has_cookies': has_cookies,
+        'message': 'Cookies loaded' if has_cookies else 'No cookies uploaded yet',
+    }), 200
 
 if __name__ == '__main__':
     app.run(debug=True)

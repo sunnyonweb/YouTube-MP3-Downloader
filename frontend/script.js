@@ -103,3 +103,65 @@ async function downloadAudio() {
     status.innerText = 'Error: ' + error.message;
   }
 }
+
+async function uploadCookies() {
+  const fileInput = document.getElementById('cookiesFile');
+  const statusDiv = document.getElementById('cookiesStatus');
+  const apiBase = (window.API_BASE && window.API_BASE.replace(/\/$/, '')) || 'http://127.0.0.1:5000';
+
+  if (!fileInput.files || fileInput.files.length === 0) {
+    statusDiv.innerText = '❌ Please select a cookies file';
+    return;
+  }
+
+  const file = fileInput.files[0];
+  const formData = new FormData();
+  formData.append('cookies', file);
+
+  try {
+    statusDiv.innerText = '⏳ Uploading cookies...';
+
+    const response = await fetch(`${apiBase}/upload-cookies`, {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Upload failed');
+    }
+
+    const result = await response.json();
+    statusDiv.innerText = '✅ ' + result.message;
+    fileInput.value = '';
+
+    // Refresh cookies status after 1 second
+    setTimeout(checkCookiesStatus, 1000);
+  } catch (error) {
+    statusDiv.innerText = '❌ Error: ' + error.message;
+  }
+}
+
+async function checkCookiesStatus() {
+  const statusDiv = document.getElementById('cookiesStatus');
+  const apiBase = (window.API_BASE && window.API_BASE.replace(/\/$/, '')) || 'http://127.0.0.1:5000';
+
+  try {
+    const response = await fetch(`${apiBase}/cookies-status`);
+    const data = await response.json();
+
+    if (data.has_cookies) {
+      statusDiv.innerText = '✅ Cookies loaded - YouTube authentication enabled';
+    } else {
+      statusDiv.innerText = '⚠️ No cookies uploaded yet';
+    }
+  } catch (error) {
+    // Silently fail for cookies status check
+    statusDiv.innerText = '⚠️ Could not check cookies status';
+  }
+}
+
+// Check cookies status on page load
+window.addEventListener('load', () => {
+  checkCookiesStatus();
+});

@@ -50,3 +50,69 @@ button:hover {
 #status {
   margin-top: 20px;
 }
+
+.cookies-section {
+  margin-bottom: 30px;
+  text-align: left;
+  background: #1a1a1a;
+  padding: 15px;
+  border-radius: 10px;
+}
+
+.cookies-section summary {
+  cursor: pointer;
+  color: #aaa;
+  font-size: 14px;
+}
+
+.cookies-section summary:hover {
+  color: #fff;
+}
+
+.cookies-content {
+  margin-top: 15px;
+  padding-top: 15px;
+  border-top: 1px solid #333;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.cookies-content ol {
+  margin: 10px 0;
+  padding-left: 20px;
+}
+
+.cookies-content code {
+  background: #111;
+  padding: 3px 6px;
+  border-radius: 3px;
+  color: #4dd0e1;
+}
+
+#cookiesFile {
+  width: 100%;
+  padding: 8px;
+  margin: 10px 0;
+  border: 1px dashed #555;
+  border-radius: 5px;
+  background: #111;
+  color: #aaa;
+}
+
+.cookies-section button {
+  width: 100%;
+  padding: 10px;
+  margin-top: 10px;
+  background: #3d3d3d;
+  font-size: 14px;
+}
+
+.cookies-section button:hover {
+  background: #555;
+}
+
+#cookiesStatus {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #4dd0e1;
+}

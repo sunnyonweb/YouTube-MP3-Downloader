@@ -11,6 +11,23 @@
 <div class="container">
   <h1>YouTube MP3 Downloader</h1>
 
+  <div class="cookies-section">
+    <details>
+      <summary>⚙️ YouTube Cookies (Required if downloads fail)</summary>
+      <div class="cookies-content">
+        <p><strong>YouTube requires authentication. If downloads fail with "Sign in" error:</strong></p>
+        <ol>
+          <li>Export your YouTube cookies using: <code>yt-dlp --cookies-from-browser firefox</code> (or chrome)</li>
+          <li>This creates <code>cookies.txt</code></li>
+          <li>Upload it below</li>
+        </ol>
+        <input type="file" id="cookiesFile" accept=".txt,.json" />
+        <button onclick="uploadCookies()">Upload Cookies</button>
+        <p id="cookiesStatus"></p>
+      </div>
+    </details>
+  </div>
+
   <input type="text" id="youtubeUrl" placeholder="Paste YouTube Link Here">
 
   <button onclick="downloadAudio()">
